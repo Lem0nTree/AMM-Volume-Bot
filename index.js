@@ -87,7 +87,7 @@ const main = async () => {
 // Ethers vars connect
 const connect = async () => {
   // new RPC connection
-  provider = new JsonRpcProvider(RPC_URL);
+  provider = new ethers.JsonRpcProvider(RPC_URL);
   wallet = new ethers.Wallet(PRIV_KEY, provider);
 
   // uniswap router contract
@@ -170,8 +170,10 @@ const sellTokensCreateVolume = async (tries = 1.0) => {
 
     const tokenContract = new ethers.Contract(TOKEN, tokenABI, wallet);
 
-  const balance = ethers.BigNumber.from(await tokenContract.balanceOf(WALLET_ADDRESS).toString());
-  const allowance = ethers.BigNumber.from(await tokenContract.allowance(WALLET_ADDRESS, ROUTER).toString());
+  // const balance = ethers.BigNumber.from(await tokenContract.balanceOf(WALLET_ADDRESS).toString());
+  // const allowance = ethers.BigNumber.from(await tokenContract.allowance(WALLET_ADDRESS, ROUTER).toString());
+  const balance = await tokenContract.balanceOf(WALLET_ADDRESS);
+  const allowance = await tokenContract.allowance(WALLET_ADDRESS, ROUTER);
 
 
     console.log(`Token balance: ${ethers.formatEther(balance)}`);
@@ -179,16 +181,17 @@ const sellTokensCreateVolume = async (tries = 1.0) => {
 
     const amountToSell = ethers.parseEther(amt);
 
-    if (balance.lt(amountToSell)) {
+    if (balance < amountToSell) {
       throw new Error(`Insufficient token balance. Required: ${ethers.formatEther(amountToSell)}, Available: ${ethers.formatEther(balance)}`);
     }
 
-    if (allowance.lt(amountToSell)) {
+    if (allowance < amountToSell) {
       console.log("Insufficient allowance, approving router...");
-      const approveTx = await tokenContract.approve(ROUTER, ethers.constants.MaxUint256);
+      const approveTx = await tokenContract.approve(ROUTER, ethers.MaxUint256);
       await approveTx.wait();
       console.log("Approval transaction confirmed");
     }
+
 
     // execute the swap await result
     const result = await swapExactTokensForETH(amountToSell, path);
@@ -250,14 +253,14 @@ const swapExactTokensForETH = async (amountIn, path) => {
     console.log("Amount In: " + amountInFormatted);
 
     const amountsOut = await uniswapRouter.getAmountsOut(amountIn, path);
-    const expectedAmt = ethers.BigNumber.from(amountsOut[amountsOut.length - 1]);
+    const expectedAmt = amountsOut[amountsOut.length - 1];
     console.log("Expected Amount Out:", ethers.formatEther(expectedAmt));
 
     const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes from now
 
     // Calculate slippage
-    const slippage = ethers.BigNumber.from("10"); // 10% slippage
-    const amountOutMin = expectedAmt.sub(expectedAmt.div(slippage));
+    const slippage = 10n; // 10% slippage
+    const amountOutMin = expectedAmt - (expectedAmt / slippage);
 
     console.log("Amount Out Min: " + ethers.formatEther(amountOutMin));
 
@@ -274,7 +277,7 @@ const swapExactTokensForETH = async (amountIn, path) => {
     const receipt = await tx.wait();
     if (receipt && receipt.status === 1) {
       console.log("TOKEN SWAP SUCCESSFUL");
-      const transactionHash = receipt.transactionHash;
+      const transactionHash = receipt.hash;
       const t = explorer + transactionHash;
 
       return {
@@ -341,12 +344,12 @@ const swapExactETHForTokens = async (amountIn, path) => {
   try {
     const amtInFormatted = ethers.formatEther(amountIn);
     const amountsOut = await uniswapRouter.getAmountsOut(amountIn, path);
-    const expectedAmt = ethers.BigNumber.from(amountsOut[amountsOut.length - 1]);
+    const expectedAmt = amountsOut[amountsOut.length - 1];
     const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes from now
 
     // Calculate slippage
-    const slippage = ethers.BigNumber.from("10"); // 10% slippage
-    const amountOutMin = expectedAmt.sub(expectedAmt.div(slippage));
+    const slippage = 10n; // 10% slippage
+    const amountOutMin = expectedAmt - (expectedAmt / slippage);
 
     const overrideOptions = {
       value: amountIn,
@@ -367,7 +370,7 @@ const swapExactETHForTokens = async (amountIn, path) => {
     const receipt = await tx.wait();
     if (receipt) {
       console.log("TOKEN SWAP SUCCESSFUL");
-      const transactionHash = receipt.transactionHash;
+      const transactionHash = receipt.hash;
       const t = explorer + transactionHash;
 
       return {
@@ -395,36 +398,31 @@ const swapExactETHForTokens = async (amountIn, path) => {
 
 // Send Report Function
 const sendReport = (report) => {
-  // get the formatted date
   const today = todayDate();
   console.log(report);
-  // configure email server
+
   const transporter = nodemailer.createTransport({
     host: "smtp.hostinger.com",
-    secure: false,
-    port: "465",
-    tls: {
-      ciphers: "SSLv3",
-      rejectUnauthorized: false,
-    },
+    port: 465,
+    secure: true, // Use SSL/TLS
     auth: {
       user: process.env.EMAIL_ADDR,
       pass: process.env.EMAIL_PW,
     },
   });
-  // setup mail params
+
   const mailOptions = {
     from: process.env.EMAIL_ADDR,
     to: process.env.RECIPIENT,
     subject: "Trade Report: " + today,
     text: JSON.stringify(report, null, 2),
   };
-  // send the email message
+
   transporter.sendMail(mailOptions, (error, info) => {
     if (error) {
-      console.log(error);
+      console.error("Email sending failed:", error);
     } else {
-      console.log("Email sent: " + info.response);
+      console.log("Email sent:", info.response);
     }
   });
 };
@@ -441,7 +439,7 @@ const scheduleNext = async (nextDate) => {
   await delay();
 
   // set next job to be 12hrs from now
-  nextDate.setHours(nextDate.getHours() + x);
+  nextDate.setMinutes(nextDate.getMinutes() + 3);
   trades.nextTrade = nextDate.toString();
   console.log("Next Trade: ", nextDate);
 
