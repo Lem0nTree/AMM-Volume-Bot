@@ -33,8 +33,8 @@ var trades = {
 // Contract ABI (please grant ERC20 approvals)
 const uniswapABI = require("./ABI/uniswapABI");
 const explorer = "https://bscscan.com/tx/";
-const MIN_AMT = 0.001; // est. gas costs
-const x = 4; // hours
+const MIN_AMT = 0.01; // est. gas costs
+const txdelay = 4; // minutes
 
 // Initiating telegram bot
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
@@ -513,7 +513,7 @@ const scheduleNext = async (nextDate) => {
   await delay();
 
   // set next job to be 12hrs from now
-  nextDate.setMinutes(nextDate.getMinutes() + 3);
+  nextDate.setMinutes(nextDate.getMinutes() + txdelay);
   trades.nextTrade = nextDate.toString();
   console.log("Next Trade: ", nextDate);
 
