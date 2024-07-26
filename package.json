@@ -1,0 +1,37 @@
+{
+  "name": "amm-volume-bot",
+  "version": "1.0.0",
+  "description": "Automated trading bot to generate daily trading volume on DEX.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AzureKn1ght/AMM-Volume-Bot.git"
+  },
+  "keywords": [
+    "AMM",
+    "bot",
+    "Uniswap",
+    "PancakeSwap",
+    "ERC20"
+  ],
+  "author": "AzureKn1ght",
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/AzureKn1ght/AMM-Volume-Bot/issues"
+  },
+  "homepage": "https://github.com/AzureKn1ght/AMM-Volume-Bot#readme",
+  "devDependencies": {
+    "eslint": "^8.52.0"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "ethers": "^6.8.0",
+    "figlet": "^1.7.0",
+    "node-schedule": "^2.1.1",
+    "nodemailer": "^6.9.7"
+  }
+}
