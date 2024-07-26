@@ -41,6 +41,7 @@ const x = 4; // hours
 // Initiating telegram bot
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_THREAD_ID = process.env.TELEGRAM_THREAD_ID;
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
 
 // Fetch Report Options
@@ -483,10 +484,21 @@ const sendTelegramReport = async (report) => {
   }
 
   try {
-    await bot.sendMessage(TELEGRAM_CHAT_ID, message);
+    const options = {
+      chat_id: TELEGRAM_CHAT_ID,
+      text: message,
+    };
+
+    // Add message_thread_id if it's provided in the environment variables
+    if (TELEGRAM_THREAD_ID) {
+      options.message_thread_id = TELEGRAM_THREAD_ID;
+    }
+
+    await bot.sendMessage(options.chat_id, options.text, options);
     console.log('Telegram report sent successfully');
   } catch (error) {
     console.error('Failed to send Telegram report:', error);
+    console.error('Error details:', error.response ? error.response.body : error.message);
   }
 };
 
