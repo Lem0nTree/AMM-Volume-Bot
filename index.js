@@ -12,6 +12,8 @@ const nodemailer = require("nodemailer");
 const figlet = require("figlet");
 require("dotenv").config();
 const fs = require("fs");
+const TelegramBot = require('node-telegram-bot-api');
+
 
 // Import environment variables
 const WALLET_ADDRESS = process.env.USER_ADDRESS;
@@ -36,7 +38,15 @@ const explorer = "https://bscscan.com/tx/";
 const MIN_AMT = 0.001; // est. gas costs
 const x = 4; // hours
 
-// All relevant addresses needed (is WBNB and PCS on BSC)
+// Initiating telegram bot
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
+
+// Fetch Report Options
+const SEND_EMAIL_REPORT = process.env.SEND_EMAIL_REPORT === 'true';
+const SEND_TELEGRAM_REPORT = process.env.SEND_TELEGRAM_REPORT === 'true';
+
 
 // Ethers vars for web3 connections
 var wallet, provider, uniswapRouter;
@@ -142,7 +152,25 @@ const AMMTrade = async () => {
 
   // send status update report
   report.push({ ...trades });
-  sendReport(report);
+
+ // Send reports based on environment settings
+ if (SEND_EMAIL_REPORT) {
+  try {
+    await sendReport(report); // Email report
+    console.log("Email report sent successfully");
+  } catch (error) {
+    console.error("Failed to send email report:", error);
+  }
+}
+
+if (SEND_TELEGRAM_REPORT) {
+  try {
+    await sendTelegramReport(report); // Telegram report
+    console.log("Telegram report sent successfully");
+  } catch (error) {
+    console.error("Failed to send Telegram report:", error);
+  }
+}
   report = [];
 
   return disconnect();
@@ -426,6 +454,42 @@ const sendReport = (report) => {
     }
   });
 };
+
+// Send Telegram Report Function
+const sendTelegramReport = async (report) => {
+  const today = todayDate();
+  
+  let message = `🤖 Trade Report: ${today}\n\n`;
+  
+  if (report.length >= 3) {
+    const tradeDetails = report[2];
+    if (tradeDetails.trade) {
+      message += `Type: ${tradeDetails.trade.type}\n`;
+      message += `Amount In: ${tradeDetails.trade.amountIn}\n`;
+      message += `Amount Out Min: ${tradeDetails.trade.amountOutMin}\n`;
+      message += `Wallet: ${tradeDetails.trade.wallet}\n`;
+      message += `Transaction: ${tradeDetails.trade.transaction_url}\n\n`;
+    }
+    
+    message += `Balance: ${tradeDetails.balance} ETH\n`;
+    message += `Success: ${tradeDetails.success}\n`;
+  }
+  
+  if (report.length >= 4) {
+    const tradeInfo = report[3];
+    message += `\nPrevious Trade: ${tradeInfo.previousTrade}\n`;
+    message += `Next Trade: ${tradeInfo.nextTrade}\n`;
+    message += `Trade Count: ${tradeInfo.count}\n`;
+  }
+
+  try {
+    await bot.sendMessage(TELEGRAM_CHAT_ID, message);
+    console.log('Telegram report sent successfully');
+  } catch (error) {
+    console.error('Failed to send Telegram report:', error);
+  }
+};
+
 
 // Current Date Function
 const todayDate = () => {
