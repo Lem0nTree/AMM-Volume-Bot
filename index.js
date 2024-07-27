@@ -11,6 +11,7 @@ const figlet = require("figlet");
 require("dotenv").config();
 const fs = require("fs");
 const TelegramBot = require('node-telegram-bot-api');
+const gaussian = require('gaussian');
 
 
 // Import environment variables
@@ -21,6 +22,12 @@ const TOKEN = process.env.TARGET_TOKEN;
 const WETH = process.env.WETH;
 const ROUTER = process.env.ROUTER;
 const USDT = process.env.USDT; 
+const TX_DELAY_MIN = parseInt(process.env.TX_DELAY_MIN);
+const TX_DELAY_MAX = parseInt(process.env.TX_DELAY_MAX);
+const MIN_AMT = parseFloat(process.env.MIN_AMT);
+const BUY_AMT_MEAN = parseFloat(process.env.BUY_AMT_MEAN);
+const BUY_AMT_STD_DEV = parseFloat(process.env.BUY_AMT_STD_DEV);
+
 
 // Storage obj
 var report = [];
@@ -33,8 +40,6 @@ var trades = {
 // Contract ABI (please grant ERC20 approvals)
 const uniswapABI = require("./ABI/uniswapABI");
 const explorer = "https://bscscan.com/tx/";
-const MIN_AMT = 0.01; // est. gas costs
-const txdelay = 4; // minutes
 
 // Initiating telegram bot
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
@@ -333,38 +338,47 @@ const buyTokensCreateVolume = async (tries = 1.0) => {
     // limit to maximum 3 tries
     if (tries > 3) return false;
     console.log(`Buying Try #${tries}...`);
-    const BUY_AMT = MIN_AMT * 5;
 
-    // prepare the variables needed for the trade
-    const a = ethers.parseEther(BUY_AMT.toString());
+    // Generate buy amount using Gaussian distribution
+    const distribution = gaussian(BUY_AMT_MEAN, Math.pow(BUY_AMT_STD_DEV, 2));
+    let buyAmount;
+    do {
+      buyAmount = distribution.ppf(Math.random());
+    } while (buyAmount < MIN_AMT); // Ensure the amount is at least MIN_AMT
+
+    console.log(`Buy Amount: ${buyAmount} ETH`);
+
+    // Prepare the variables needed for the trade
+    const amountIn = ethers.parseEther(buyAmount.toFixed(18)); // Use 18 decimal places
     const path = [WETH, USDT, TOKEN];
-    // execute the swap transaction and await result
-    const result = await swapExactETHForTokens(a, path);
 
-    // succeeded
+    // Execute the swap transaction and await result
+    const result = await swapExactETHForTokens(amountIn, path);
+
     if (result) {
-      // get the remaining balance of the current wallet
+      // Get the remaining balance of the current wallet
       const u = await provider.getBalance(WALLET_ADDRESS);
       trades.previousTrade = new Date().toString();
       const balance = ethers.formatEther(u);
-      console.log(`Balance:${balance} ETH`);
+      console.log(`Balance: ${balance} ETH`);
       await scheduleNext(new Date());
 
-      // successful
-      const success = {
+      // Successful
+      return {
         balance: balance,
         success: true,
         trade: result,
       };
-
-      return success;
-    } else throw new Error();
+    } else {
+      throw new Error("Swap failed");
+    }
   } catch (error) {
     console.log("Attempt Failed!");
+    console.log("Error:", error.message);
     console.log("retrying...");
     console.error(error);
 
-    // fail, increment try count and retry again
+    // Fail, increment try count and retry again
     return await buyTokensCreateVolume(++tries);
   }
 };
@@ -512,30 +526,34 @@ const todayDate = () => {
 
 // Job Scheduler Function
 const scheduleNext = async (nextDate) => {
-  // apply delay
-  await delay();
+  try {
+    const delayMinutes = delay();
+    nextDate.setMinutes(nextDate.getMinutes() + delayMinutes);
+    trades.nextTrade = nextDate.toString(); 
+    console.log("Next Trade:", nextDate.toLocaleString());
 
-  // set next job to be 12hrs from now
-  nextDate.setMinutes(nextDate.getMinutes() + txdelay);
-  trades.nextTrade = nextDate.toString();
-  console.log("Next Trade: ", nextDate);
-
-  // schedule next restake
-  scheduler.scheduleJob(nextDate, AMMTrade);
-  storeData();
-  return;
+    // Schedule next trade
+    scheduler.scheduleJob(nextDate, AMMTrade);
+    await storeData();
+  } catch (error) {
+    console.error("Error in scheduleNext:", error);
+    // Attempt to schedule the next trade despite the error
+    const fallbackDate = new Date(Date.now() + 5 * 60000); // 5 minutes from now
+    console.log("Scheduling fallback trade at:", fallbackDate.toLocaleString());
+    scheduler.scheduleJob(fallbackDate, AMMTrade);
+  }
 };
 
 // Data Storage Function
 const storeData = async () => {
-  const data = JSON.stringify(trades);
-  fs.writeFile("./next.json", data, (err) => {
-    if (err) {
-      console.error(err);
-    } else {
-      console.log("Data stored:\n", trades);
-    }
-  });
+  const data = JSON.stringify(trades, null, 2); // Pretty print JSON
+  try {
+    await fs.promises.writeFile("./next.json", data);
+    console.log("Data stored successfully:");
+    console.log(trades);
+  } catch (err) {
+    console.error("Error storing data:", err);
+  }
 };
 
 // Generate random num Function
@@ -550,9 +568,9 @@ const getRandomNum = (min, max) => {
 
 // Random Time Delay Function
 const delay = () => {
-  const ms = getRandomNum(2971, 4723);
-  console.log(`delay(${ms})`);
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  const minutes = getRandomNum(TX_DELAY_MIN, TX_DELAY_MAX);
+  console.log(`Next trade delay: ${minutes} minutes`);
+  return minutes;
 };
 
 main();
