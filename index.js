@@ -197,10 +197,8 @@ const sellTokensCreateVolume = async (tries = 1.0) => {
 
     const tokenContract = new ethers.Contract(TOKEN, tokenABI, wallet);
 
-  // const balance = ethers.BigNumber.from(await tokenContract.balanceOf(WALLET_ADDRESS).toString());
-  // const allowance = ethers.BigNumber.from(await tokenContract.allowance(WALLET_ADDRESS, ROUTER).toString());
-  const balance = await tokenContract.balanceOf(WALLET_ADDRESS);
-  const allowance = await tokenContract.allowance(WALLET_ADDRESS, ROUTER);
+    const balance = await tokenContract.balanceOf(WALLET_ADDRESS);
+    const allowance = await tokenContract.allowance(WALLET_ADDRESS, ROUTER);
 
 
     console.log(`Token balance: ${ethers.formatEther(balance)}`);
@@ -251,25 +249,30 @@ const sellTokensCreateVolume = async (tries = 1.0) => {
     return await sellTokensCreateVolume(++tries);
   }
 };
-
-// Get minimum amount to trade
 const getAmt = async (path) => {
-  // Update max "i" as necessary
-  for (let i = 1; i < 999; i++) {
-    // check how much we can get out of trading
-    const amt = ethers.parseEther("" + i.toFixed(1));
+  const BUY_AMT = MIN_AMT * 5 + MIN_AMT * 2;
+  let low = 500;
+  let high = 999;
+  let lastValidAmount = "999";
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const amt = ethers.parseEther(mid.toString());
     const result = await uniswapRouter.getAmountsOut(amt, path);
     const expectedAmt = result[result.length - 1];
-    const BUY_AMT = MIN_AMT * 5 + MIN_AMT * 2;
-
-    // check if traded amount is enough to cover BUY_AMT
     const amtOut = Number(ethers.formatEther(expectedAmt));
+
     if (amtOut > BUY_AMT) {
-      const dec = getRandomNum(4740217, 6530879);
-      return i + "." + dec;
+      lastValidAmount = mid.toString();
+      high = mid - 1;
+    } else {
+      low = mid + 1;
     }
   }
-  return "99.9";
+
+  // Add random decimals to the amount
+  const dec = getRandomNum(1000000, 9999999);
+  return `${lastValidAmount}.${dec}`;
 };
 
 // Swaps Function (assumes 18 decimals on input amountIn)
