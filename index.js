@@ -27,6 +27,7 @@ const TX_DELAY_MAX = parseInt(process.env.TX_DELAY_MAX);
 const MIN_AMT = parseFloat(process.env.MIN_AMT);
 const BUY_AMT_MEAN = parseFloat(process.env.BUY_AMT_MEAN);
 const BUY_AMT_STD_DEV = parseFloat(process.env.BUY_AMT_STD_DEV);
+const STRATEGY_BIAS = parseFloat(process.env.STRATEGY_BIAS || "0");
 
 
 // Storage obj
@@ -50,6 +51,12 @@ const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
 // Fetch Report Options
 const SEND_EMAIL_REPORT = process.env.SEND_EMAIL_REPORT === 'true';
 const SEND_TELEGRAM_REPORT = process.env.SEND_TELEGRAM_REPORT === 'true';
+
+// Initiate Strategy
+if (STRATEGY_BIAS < -100 || STRATEGY_BIAS > 100) {
+  throw new Error("STRATEGY_BIAS must be between -100 and 100");
+}
+const BIAS_FACTOR = STRATEGY_BIAS / 100;
 
 
 // Ethers vars for web3 connections
@@ -191,6 +198,10 @@ const sellTokensCreateVolume = async (tries = 1.0) => {
     const path = [TOKEN, USDT, WETH];
     const amt = await getAmt(path);
 
+    if (amt === null) {
+      console.log("Insufficient balance to proceed with sell operation.");
+      return false;
+    }
     console.log(`Amount to sell: ${amt} ${TOKEN}`);
 
     // Check token balance and allowance
@@ -254,30 +265,63 @@ const sellTokensCreateVolume = async (tries = 1.0) => {
     return await sellTokensCreateVolume(++tries);
   }
 };
+
 const getAmt = async (path) => {
-  const BUY_AMT = MIN_AMT * 5 + MIN_AMT * 2;
-  let low = 500;
-  let high = 999;
-  let lastValidAmount = "999";
+  // Use the same Gaussian distribution parameters as in buyTokensCreateVolume
+  const distribution = createDistribution(false);
+  
+  let sellAmountETH;
+  do {
+    sellAmountETH = distribution.ppf(Math.random());
+  } while (sellAmountETH < MIN_AMT); // Ensure the amount is at least MIN_AMT
+
+  console.log(`Sell Amount (in ETH value): ${sellAmountETH} ETH`);
+
+  // Convert the ETH amount to the equivalent amount of tokens
+  const amountOutMin = ethers.parseEther(sellAmountETH.toFixed(18));
+  
+  let low = ethers.parseEther("0.000001"); // Start with a very small amount
+  let high = ethers.parseEther("1000000"); // Set an upper limit
+  let lastValidAmount = high;
+
+  // Check token balance
+  const tokenContract = new ethers.Contract(TOKEN, [
+    'function balanceOf(address) view returns (uint256)'
+  ], wallet);
+  const balance = await tokenContract.balanceOf(WALLET_ADDRESS);
+  console.log(`Current token balance: ${ethers.formatEther(balance)}`);
 
   while (low <= high) {
-    const mid = Math.floor((low + high) / 2);
-    const amt = ethers.parseEther(mid.toString());
-    const result = await uniswapRouter.getAmountsOut(amt, path);
-    const expectedAmt = result[result.length - 1];
-    const amtOut = Number(ethers.formatEther(expectedAmt));
+    const mid = (low + high) / 2n;
+    
+    // Check if mid is greater than balance
+    if (mid > balance) {
+      high = mid - 1n;
+      continue;
+    }
+    
+    const result = await uniswapRouter.getAmountsOut(mid, path);
+    const expectedAmtOut = result[result.length - 1];
 
-    if (amtOut > BUY_AMT) {
-      lastValidAmount = mid.toString();
-      high = mid - 1;
+    if (expectedAmtOut >= amountOutMin) {
+      lastValidAmount = mid;
+      high = mid - 1n;
     } else {
-      low = mid + 1;
+      low = mid + 1n;
     }
   }
 
-  // Add random decimals to the amount
-  const dec = getRandomNum(1000000, 9999999);
-  return `${lastValidAmount}.${dec}`;
+  // Final balance check
+  if (lastValidAmount > balance) {
+    console.log("Insufficient balance for the calculated sell amount.");
+    return null;
+  }
+
+  // Convert the BigInt to a decimal string
+  const amountInTokens = ethers.formatEther(lastValidAmount);
+  console.log(`Amount of tokens to sell: ${amountInTokens}`);
+
+  return amountInTokens;
 };
 
 // Swaps Function (assumes 18 decimals on input amountIn)
@@ -340,7 +384,7 @@ const buyTokensCreateVolume = async (tries = 1.0) => {
     console.log(`Buying Try #${tries}...`);
 
     // Generate buy amount using Gaussian distribution
-    const distribution = gaussian(BUY_AMT_MEAN, Math.pow(BUY_AMT_STD_DEV, 2));
+    const distribution = createDistribution(true);
     let buyAmount;
     do {
       buyAmount = distribution.ppf(Math.random());
@@ -527,7 +571,7 @@ const todayDate = () => {
 // Job Scheduler Function
 const scheduleNext = async (nextDate) => {
   try {
-    const delayMinutes = delay();
+    const delayMinutes = getDelay();
     nextDate.setMinutes(nextDate.getMinutes() + delayMinutes);
     trades.nextTrade = nextDate.toString(); 
     console.log("Next Trade:", nextDate.toLocaleString());
@@ -567,10 +611,41 @@ const getRandomNum = (min, max) => {
 };
 
 // Random Time Delay Function
-const delay = () => {
+const getDelay = () => {
   const minutes = getRandomNum(TX_DELAY_MIN, TX_DELAY_MAX);
   console.log(`Next trade delay: ${minutes} minutes`);
   return minutes;
 };
+
+// Gaussian distribution creation in both buy and sell functions
+const createDistribution = (isBuy) => {
+  let adjustedMean;
+  let adjustedStdDev;
+
+  if (BIAS_FACTOR !== 0) {
+    if (BIAS_FACTOR > 0) {
+      // For positive bias (ETH profit)
+      adjustedMean = isBuy 
+        ? BUY_AMT_MEAN * (1 - BIAS_FACTOR) // Buy less
+        : BUY_AMT_MEAN * (1 + BIAS_FACTOR); // Sell more
+    } else {
+      // For negative bias (token accumulation)
+      adjustedMean = isBuy
+        ? BUY_AMT_MEAN * (1 + Math.abs(BIAS_FACTOR)) // Buy more
+        : BUY_AMT_MEAN * (1 - Math.abs(BIAS_FACTOR)); // Sell less
+    }
+    
+    // Adjust the standard deviation proportionally to the mean
+    adjustedStdDev = (BUY_AMT_STD_DEV / BUY_AMT_MEAN) * adjustedMean;
+  } else {
+    // No bias, use original values
+    adjustedMean = BUY_AMT_MEAN;
+    adjustedStdDev = BUY_AMT_STD_DEV;
+  }
+
+  return gaussian(adjustedMean, Math.pow(adjustedStdDev, 2));
+};
+
+
 
 main();
